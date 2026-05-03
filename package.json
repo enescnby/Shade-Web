@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:tunnel": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",

@@ -37,10 +37,27 @@ message WebSocketMessage {
     MessageAck ack = 3;
   }
 }
+
+/** Android → Web sync tunnel: one binary frame per batch (optional vs JSON batch). */
+message SyncWireMessage {
+  string message_id = 1;
+  string chat_id = 2;
+  string sender_shade_id = 3;
+  bytes ciphertext = 4;
+  bytes nonce = 5;
+  int64 timestamp = 6;
+  string msg_type = 7;
+  string status = 8;
+}
+
+message SyncWireBatch {
+  repeated SyncWireMessage messages = 1;
+}
 `;
 
 const root = protobuf.parse(PROTO, { keepCase: true }).root;
 const WsMessageType = root.lookupType("com.shade.app.proto.WebSocketMessage");
+const SyncWireBatchType = root.lookupType("com.shade.app.proto.SyncWireBatch");
 
 export interface EncryptedPayloadData {
   message_id: string;
@@ -86,6 +103,50 @@ export function encodeWebSocketMessage(msg: DecodedWebSocketMessage): Uint8Array
   else if (msg.kind === "receipt") data = { receipt: msg.receipt };
   else data = { ack: msg.ack };
   return WsMessageType.encode(WsMessageType.create(data)).finish() as Uint8Array;
+}
+
+export interface DecodedSyncWireMessage {
+  message_id: string;
+  chat_id: string;
+  sender_shade_id: string;
+  ciphertext: Uint8Array;
+  nonce: Uint8Array;
+  timestamp: number;
+  msg_type: string;
+  status: string;
+}
+
+/** Decode a binary sync batch frame from Android. Returns null if bytes are not a valid SyncWireBatch. */
+export function decodeSyncWireBatch(bytes: Uint8Array): DecodedSyncWireMessage[] | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const decoded = SyncWireBatchType.decode(bytes) as any;
+    const messages = decoded.messages as
+      | Array<{
+          message_id?: string;
+          chat_id?: string;
+          sender_shade_id?: string;
+          ciphertext?: Uint8Array;
+          nonce?: Uint8Array;
+          timestamp?: unknown;
+          msg_type?: string;
+          status?: string;
+        }>
+      | undefined;
+    if (!Array.isArray(messages)) return null;
+    return messages.map((m) => ({
+      message_id: m.message_id ?? "",
+      chat_id: m.chat_id ?? "",
+      sender_shade_id: m.sender_shade_id ?? "",
+      ciphertext: m.ciphertext ?? new Uint8Array(),
+      nonce: m.nonce ?? new Uint8Array(),
+      timestamp: longToNumber(m.timestamp),
+      msg_type: m.msg_type ?? "TEXT",
+      status: m.status ?? "SENT",
+    }));
+  } catch {
+    return null;
+  }
 }
 
 export function decodeWebSocketMessage(bytes: Uint8Array): DecodedWebSocketMessage | null {

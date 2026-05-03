@@ -13,7 +13,6 @@ export interface EphemeralKeyPair {
 export interface DecryptedCredentials {
   x25519_priv: string;
   ed25519_priv: string;
-  jwt: string;
   shade_id: string;
   user_id: string;
 }

@@ -49,3 +49,19 @@ message WebSocketMessage {
     MessageAck ack = 3;
   }
 }
+
+// Android → Web sync tunnel: binary WebSocket frames encode SyncWireBatch.
+message SyncWireMessage {
+  string message_id = 1;
+  string chat_id = 2;
+  string sender_shade_id = 3;
+  bytes ciphertext = 4;
+  bytes nonce = 5;
+  int64 timestamp = 6;
+  string msg_type = 7;
+  string status = 8;
+}
+
+message SyncWireBatch {
+  repeated SyncWireMessage messages = 1;
+}

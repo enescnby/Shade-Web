@@ -14,12 +14,15 @@ function cacheContact(info: ContactInfo): void {
   byUserId.set(info.user_id, info);
 }
 
-export async function getContactInfo(shadeId: string, jwt: string): Promise<ContactInfo> {
+export async function getContactInfo(
+  shadeId: string,
+  accessToken: string,
+): Promise<ContactInfo> {
   const cached = byShadeId.get(shadeId);
   if (cached) return cached;
 
   const res = await fetch(`${API_URL}/api/v1/user/lookup/${encodeURIComponent(shadeId)}`, {
-    headers: { Authorization: `Bearer ${jwt}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!res.ok) throw new Error(`Contact lookup failed: ${res.status}`);
 
@@ -38,9 +41,12 @@ export function getContactByUserId(userId: string): ContactInfo | null {
 }
 
 /** Pre-populate both caches — used by the sync flow once it knows chat partners. */
-export async function prefetchContacts(shadeIds: string[], jwt: string): Promise<void> {
+export async function prefetchContacts(
+  shadeIds: string[],
+  accessToken: string,
+): Promise<void> {
   const fresh = shadeIds.filter((id) => !byShadeId.has(id));
-  await Promise.allSettled(fresh.map((id) => getContactInfo(id, jwt)));
+  await Promise.allSettled(fresh.map((id) => getContactInfo(id, accessToken)));
 }
 
 export function clearContactCache(): void {

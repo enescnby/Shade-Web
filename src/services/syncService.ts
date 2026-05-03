@@ -6,13 +6,13 @@ import { prefetchContacts } from "../api/contactsApi";
 
 interface SyncOptions {
   sessionId: string;
-  jwt: string;
+  accessToken: string;
   transferKeyHex: string;
 }
 
 export function startSync({
   sessionId,
-  jwt,
+  accessToken,
   transferKeyHex,
 }: SyncOptions): () => void {
   const { addBatch, setSyncStatus } = useMessageStore.getState();
@@ -21,7 +21,7 @@ export function startSync({
 
   setSyncStatus("connecting");
 
-  const url = `${WS_URL}/api/v1/ws/sync/${sessionId}?token=${encodeURIComponent(jwt)}&role=web`;
+  const url = `${WS_URL}/api/v1/ws/sync/${sessionId}?token=${encodeURIComponent(accessToken)}&role=web`;
   console.info("[sync] connecting", url);
   const ws = new WebSocket(url);
 
@@ -40,9 +40,6 @@ export function startSync({
       };
       if (msg.type === "batch" && Array.isArray(msg.messages)) {
         addBatch(msg.messages, transferKey);
-        // Track every chat partner so we can prefetch their contact info —
-        // this populates the user_id reverse cache, which the realtime echo
-        // handler needs to decrypt outgoing messages from another device.
         const ownShadeId = useAuthStore.getState().shadeId;
         for (const m of msg.messages) {
           if (m.chat_id && m.chat_id !== ownShadeId) seenChatPartners.add(m.chat_id);
@@ -50,7 +47,7 @@ export function startSync({
       } else if (msg.type === "sync_complete") {
         setSyncStatus("done");
         if (seenChatPartners.size > 0) {
-          void prefetchContacts(Array.from(seenChatPartners), jwt);
+          void prefetchContacts(Array.from(seenChatPartners), accessToken);
         }
         ws.close(1000);
       } else if (msg.type === "error") {
@@ -68,12 +65,17 @@ export function startSync({
 
   ws.onclose = (event) => {
     console.info("[sync] close", event.code, event.reason);
-    if (event.code === 1000) return; // normal close after sync_complete
+    if (event.code === 1000) return;
     if (event.code === 4401)
       setSyncStatus("error", "Oturum geçersiz veya süresi doldu");
     else if (event.code === 4404)
       setSyncStatus("error", "Sync oturumu bulunamadı");
     else if (event.code === 4410) setSyncStatus("error", "Sync süresi doldu");
+    else if (event.code === 4408)
+      setSyncStatus(
+        "error",
+        "Web bağlantısı zaman aşımına uğradı; tarayıcıda oturumu açık tutun",
+      );
     else if (event.code === 4429)
       setSyncStatus("error", "Bağlantı limiti aşıldı");
     else if (useMessageStore.getState().syncStatus !== "done") {

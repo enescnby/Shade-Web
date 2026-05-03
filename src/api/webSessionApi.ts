@@ -8,6 +8,21 @@ export interface AuthorizedSessionResponse {
   ciphertext: string;
   nonce: string;
   android_x25519_pub: string;
+  /** Web session access token (Bearer / WS query). Backend may use camelCase or PascalCase. */
+  access_token?: string;
+  AccessToken?: string;
+  device_id?: string;
+  DeviceID?: string;
+}
+
+/** Normalize poll JSON field names from the server. */
+export function sessionPollTokens(data: AuthorizedSessionResponse): {
+  accessToken: string;
+  deviceId: string;
+} {
+  const accessToken = data.access_token ?? data.AccessToken ?? "";
+  const deviceId = data.device_id ?? data.DeviceID ?? "";
+  return { accessToken, deviceId };
 }
 
 const MOCK = import.meta.env.VITE_MOCK_AUTH === "true";
