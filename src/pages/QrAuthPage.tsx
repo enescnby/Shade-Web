@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
-import { Shield, RefreshCw } from "lucide-react";
+import { Shield, RefreshCw, Globe } from "lucide-react";
 import {
   deriveTransferKey,
   decryptCredentials,
@@ -10,6 +10,7 @@ import {
 import { bytesToHex } from "../crypto/utils";
 import { createWebSession, pollWebSession } from "../api/webSessionApi";
 import { useAuthStore } from "../store/authStore";
+import { useTranslation, setLanguage } from "../i18n/useTranslation";
 
 const QR_TTL_SECONDS = 120;
 const POLL_INTERVAL_MS = 2000;
@@ -38,9 +39,24 @@ function Step({ n, text }: { n: number; text: string }) {
   );
 }
 
+function LangToggle() {
+  const { lang } = useTranslation();
+  return (
+    <button
+      onClick={() => setLanguage(lang === "en" ? "tr" : "en")}
+      title="Switch language"
+      className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+    >
+      <Globe className="h-3.5 w-3.5" />
+      {lang === "en" ? "TR" : "EN"}
+    </button>
+  );
+}
+
 export default function QrAuthPage() {
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const { t } = useTranslation();
 
   const wasAuthenticatedAtMount = useRef(
     useAuthStore.getState().isAuthenticated,
@@ -68,10 +84,11 @@ export default function QrAuthPage() {
       privKeyRef.current = keypair.privKey;
       const { session_id } = await createWebSession();
       sessionIdRef.current = session_id;
+      // Format matches Android QrScannerViewModel parser: shade://web-auth?s=...&k=...
       setQrValue(`shade://web-auth?s=${session_id}&k=${keypair.pubKeyHex}`);
       setStatus("waiting");
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Bilinmeyen hata");
+      setErrorMsg(e instanceof Error ? e.message : t("unknown_error"));
       setStatus("error");
     }
   }).current;
@@ -108,11 +125,6 @@ export default function QrAuthPage() {
           );
           if (data && privKeyRef.current) {
             active = false;
-            console.log("[QrAuth] Raw data from server:", {
-              android_x25519_pub: data.android_x25519_pub,
-              nonce: data.nonce,
-              ciphertext: data.ciphertext,
-            });
             let transferKey: Uint8Array;
             let creds: ReturnType<typeof decryptCredentials>;
             try {
@@ -130,13 +142,11 @@ export default function QrAuthPage() {
               setErrorMsg(
                 decryptErr instanceof Error
                   ? decryptErr.message
-                  : "Şifre çözme hatası",
+                  : t("decrypt_error"),
               );
               setStatus("error");
               return;
             }
-            console.log("[QrAuth] Decrypted credentials:", creds);
-            // setAuth persists the full credential set to the encrypted vault.
             setAuth({
               jwt: creds.jwt,
               shadeId: creds.shade_id,
@@ -155,7 +165,7 @@ export default function QrAuthPage() {
           }
         } catch (e) {
           if (controller.signal.aborted) return;
-          setErrorMsg(e instanceof Error ? e.message : "Poll hatası");
+          setErrorMsg(e instanceof Error ? e.message : t("poll_error"));
           setStatus("error");
           return;
         }
@@ -168,7 +178,7 @@ export default function QrAuthPage() {
       active = false;
       controller.abort();
     };
-  }, [status, navigate, setAuth]);
+  }, [status, navigate, setAuth, t]);
 
   useEffect(() => {
     void initSession();
@@ -187,6 +197,11 @@ export default function QrAuthPage() {
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center bg-background px-4 py-12">
+      {/* Language toggle */}
+      <div className="absolute top-4 right-4">
+        <LangToggle />
+      </div>
+
       {/* Brand */}
       <div className="mb-8 flex flex-col items-center gap-4">
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-violet-600 shadow-lg shadow-violet-500/25">
@@ -197,7 +212,7 @@ export default function QrAuthPage() {
             Shade Web
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Uçtan uca şifreli mesajlaşma
+            {t("app_tagline")}
           </p>
         </div>
       </div>
@@ -231,10 +246,8 @@ export default function QrAuthPage() {
                 <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                   <RefreshCw className="h-6 w-6 text-muted-foreground" />
                 </div>
-                <p className="text-sm text-center text-muted-foreground leading-snug">
-                  QR kodun süresi
-                  <br />
-                  doldu
+                <p className="text-sm text-center text-muted-foreground leading-snug whitespace-pre-line">
+                  {t("qr_expired")}
                 </p>
               </div>
             )}
@@ -267,7 +280,7 @@ export default function QrAuthPage() {
               </span>
             </div>
             <p className="mt-2 text-center text-[11px] text-muted-foreground/70">
-              QR kod {timerStr} sonra geçersiz olacak
+              {t("qr_expires_in", { time: timerStr })}
             </p>
           </div>
         )}
@@ -280,7 +293,7 @@ export default function QrAuthPage() {
               className="flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-violet-700 active:scale-95 transition-all"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              Yeni QR Oluştur
+              {t("qr_new")}
             </button>
           </div>
         )}
@@ -290,14 +303,14 @@ export default function QrAuthPage() {
 
         {/* Steps */}
         <div className="px-7 py-5 space-y-3.5">
-          <Step n={1} text="Android'de Shade uygulamasını aç" />
-          <Step n={2} text={'Ayarlar → "Web\'e Bağlan" seçeneğine dokun'} />
-          <Step n={3} text="Kamerayı QR kodun üzerine tut" />
+          <Step n={1} text={t("step1")} />
+          <Step n={2} text={t("step2")} />
+          <Step n={3} text={t("step3")} />
         </div>
       </div>
 
       <p className="mt-6 text-xs text-muted-foreground/60 text-center max-w-xs">
-        Tüm veriler uçtan uca şifrelenir. Sunucu mesaj içeriklerine erişemez.
+        {t("footer_privacy")}
       </p>
     </div>
   );

@@ -8,6 +8,7 @@ import { connectChat, sendProtoMessage, sendReadReceiptsForChat } from "../servi
 import { getContactInfo, clearContactCache } from "../api/contactsApi";
 import { encryptMessage } from "../crypto/messageCrypto";
 import { clearVault } from "../store/vaultStore";
+import { useTranslation } from "../i18n/useTranslation";
 
 interface LocationState {
   sessionId?: string;
@@ -17,6 +18,7 @@ interface LocationState {
 export default function ChatsPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { sessionId, transferKeyHex } = (location.state ?? {}) as LocationState;
   console.info("[ChatsPage] mount, location.state:", location.state, "sessionId:", sessionId);
 
@@ -150,7 +152,7 @@ export default function ChatsPage() {
           </div>
           <button
             onClick={() => void handleLogout()}
-            title="Çıkış yap"
+            title={t("logout_title")}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <LogOut className="h-4 w-4" />
@@ -165,7 +167,7 @@ export default function ChatsPage() {
           {chatList.length === 0 && syncStatus === "done" ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
               <MessageCircle className="h-10 w-10 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">Henüz sohbet yok</p>
+              <p className="text-sm text-muted-foreground">{t("chats_empty")}</p>
             </div>
           ) : (
             chatList.map((chat) => (
@@ -199,11 +201,12 @@ export default function ChatsPage() {
 /* ─── Sync banner ─────────────────────────────────────────────────────────── */
 
 function SyncBanner({ status, error }: { status: string; error: string }) {
+  const { t } = useTranslation();
   if (status === "error") {
     return (
       <div className="flex items-center gap-2 border-b border-red-500/20 bg-red-500/10 px-4 py-2.5">
         <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
-        <span className="text-xs text-red-400">{error || "Senkronizasyon hatası"}</span>
+        <span className="text-xs text-red-400">{error || t("sync_error")}</span>
       </div>
     );
   }
@@ -211,7 +214,7 @@ function SyncBanner({ status, error }: { status: string; error: string }) {
     <div className="flex items-center gap-2 border-b border-violet-500/20 bg-violet-500/10 px-4 py-2.5">
       <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-violet-400" />
       <span className="text-xs text-violet-400">
-        {status === "connecting" ? "Bağlanıyor..." : "Mesajlar senkronize ediliyor..."}
+        {status === "connecting" ? t("sync_connecting") : t("sync_syncing")}
       </span>
     </div>
   );
@@ -228,6 +231,7 @@ function ChatRow({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const { lang } = useTranslation();
   const last = chat.lastMessage;
   return (
     <button
@@ -242,7 +246,7 @@ function ChatRow({
           <p className="truncate text-sm font-medium text-foreground">{chat.chat_id}</p>
           {last && (
             <span className="shrink-0 text-[10px] text-muted-foreground">
-              {formatTime(last.timestamp)}
+              {formatTime(last.timestamp, lang)}
             </span>
           )}
         </div>
@@ -295,6 +299,7 @@ function MessagePanel({
 
 function MessageInput({ onSend }: { onSend: (text: string) => void }) {
   const [text, setText] = useState("");
+  const { t } = useTranslation();
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -312,7 +317,7 @@ function MessageInput({ onSend }: { onSend: (text: string) => void }) {
       <input
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Mesaj yazın..."
+        placeholder={t("type_message")}
         className="flex-1 rounded-xl bg-muted px-4 py-2 text-sm outline-none placeholder:text-muted-foreground focus:ring-1 focus:ring-violet-500"
       />
       <button
@@ -327,6 +332,7 @@ function MessageInput({ onSend }: { onSend: (text: string) => void }) {
 }
 
 function MessageBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
+  const { lang } = useTranslation();
   return (
     <div className={`flex ${isOwn ? "justify-end" : "justify-start"}`}>
       <div
@@ -351,7 +357,7 @@ function MessageBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
             isOwn ? "text-white/60" : "text-muted-foreground"
           }`}
         >
-          <span>{formatTime(msg.timestamp)}</span>
+          <span>{formatTime(msg.timestamp, lang)}</span>
           {isOwn && (
             msg.status === "READ" ? (
               <CheckCheck className="h-3 w-3 text-violet-300" />
@@ -370,12 +376,13 @@ function MessageBubble({ msg, isOwn }: { msg: Message; isOwn: boolean }) {
 /* ─── Empty state ─────────────────────────────────────────────────────────── */
 
 function EmptyPanel() {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-muted">
         <MessageCircle className="h-8 w-8 text-muted-foreground/40" />
       </div>
-      <p className="text-sm text-muted-foreground">Bir sohbet seçin</p>
+      <p className="text-sm text-muted-foreground">{t("select_chat")}</p>
     </div>
   );
 }
@@ -393,11 +400,12 @@ function ChatAvatar({ id, size = "md" }: { id: string; size?: "sm" | "md" }) {
   );
 }
 
-function formatTime(ms: number): string {
+function formatTime(ms: number, locale = "en"): string {
   const d = new Date(ms);
   const now = new Date();
+  const loc = locale === "tr" ? "tr-TR" : "en-GB";
   if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleTimeString(loc, { hour: "2-digit", minute: "2-digit" });
   }
-  return d.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" });
+  return d.toLocaleDateString(loc, { day: "2-digit", month: "2-digit" });
 }
