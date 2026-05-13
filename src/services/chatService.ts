@@ -15,7 +15,7 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 let intentionallyClosed = false;
-let activeJwt: string | null = null;
+let activeAccessToken: string | null = null;
 
 const HEARTBEAT_MS = 25_000;
 const MAX_BACKOFF_MS = 30_000;
@@ -50,20 +50,27 @@ function clearReconnect(): void {
 }
 
 function scheduleReconnect(): void {
-  if (intentionallyClosed || !activeJwt) return;
+  if (intentionallyClosed || !activeAccessToken) return;
   clearReconnect();
   const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_BACKOFF_MS);
   reconnectAttempts += 1;
   console.info(`[chatService] reconnect in ${delay}ms (attempt ${reconnectAttempts})`);
   reconnectTimer = setTimeout(() => {
-    if (intentionallyClosed || !activeJwt) return;
-    openSocket(activeJwt);
+    if (intentionallyClosed || !activeAccessToken) return;
+    openSocket(activeAccessToken);
   }, delay);
 }
 
 function wsSend(receipt: DeliveryReceiptData): void {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const bytes = encodeWebSocketMessage({ kind: "receipt", receipt });
+  ws.send(new Uint8Array(bytes).buffer as ArrayBuffer);
+}
+
+/** Tells the gateway we accepted the inbound frame — separate from DELIVERED/READ receipts. */
+function wsSendPayloadAck(messageId: string): void {
+  if (!messageId || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const bytes = encodeWebSocketMessage({ kind: "ack", ack: { message_id: messageId } });
   ws.send(new Uint8Array(bytes).buffer as ArrayBuffer);
 }
 
@@ -84,7 +91,8 @@ function wsSend(receipt: DeliveryReceiptData): void {
  *        message into chat_id=receiver.shade_id, sender_shade_id=ourShadeId.
  */
 async function handleIncomingPayload(payload: EncryptedPayloadData): Promise<void> {
-  const { x25519PrivKeyHex, jwt, userId, shadeId } = useAuthStore.getState();
+  const { x25519PrivKeyHex, accessToken, userId, shadeId } =
+    useAuthStore.getState();
   const store = useMessageStore.getState();
 
   const isOutgoingEcho = payload.sender_shade_id === shadeId;
@@ -129,7 +137,7 @@ async function handleIncomingPayload(payload: EncryptedPayloadData): Promise<voi
   let senderUserId: string | undefined;
   let encPubKey: string;
   try {
-    const contact = await getContactInfo(payload.sender_shade_id, jwt);
+    const contact = await getContactInfo(payload.sender_shade_id, accessToken);
     senderUserId = contact.user_id;
     encPubKey = contact.encryption_public_key;
   } catch (e) {
@@ -177,11 +185,11 @@ async function handleIncomingPayload(payload: EncryptedPayloadData): Promise<voi
   }
 }
 
-function openSocket(jwt: string): void {
+function openSocket(accessToken: string): void {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     return;
   }
-  const url = `${WS_URL}/api/v1/ws?token=${encodeURIComponent(jwt)}`;
+  const url = `${WS_URL}/api/v1/ws?token=${encodeURIComponent(accessToken)}`;
   const socket = new WebSocket(url);
   socket.binaryType = "arraybuffer";
   ws = socket;
@@ -196,6 +204,7 @@ function openSocket(jwt: string): void {
     if (!msg) return;
 
     if (msg.kind === "payload") {
+      wsSendPayloadAck(msg.payload.message_id);
       void handleIncomingPayload(msg.payload);
     } else if (msg.kind === "receipt") {
       const status: MsgStatus = msg.receipt.status === 1 ? "READ" : "DELIVERED";
@@ -215,15 +224,15 @@ function openSocket(jwt: string): void {
   };
 }
 
-export function connectChat(jwt: string): () => void {
+export function connectChat(accessToken: string): () => void {
   intentionallyClosed = false;
-  activeJwt = jwt;
+  activeAccessToken = accessToken;
   reconnectAttempts = 0;
-  openSocket(jwt);
+  openSocket(accessToken);
 
   return () => {
     intentionallyClosed = true;
-    activeJwt = null;
+    activeAccessToken = null;
     clearHeartbeat();
     clearReconnect();
     if (ws) {

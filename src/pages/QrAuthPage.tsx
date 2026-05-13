@@ -8,7 +8,11 @@ import {
   generateEphemeralKeyPair,
 } from "../crypto/authCrypto";
 import { bytesToHex } from "../crypto/utils";
-import { createWebSession, pollWebSession } from "../api/webSessionApi";
+import {
+  createWebSession,
+  pollWebSession,
+  sessionPollTokens,
+} from "../api/webSessionApi";
 import { useAuthStore } from "../store/authStore";
 
 const QR_TTL_SECONDS = 120;
@@ -108,11 +112,18 @@ export default function QrAuthPage() {
           );
           if (data && privKeyRef.current) {
             active = false;
+            const { accessToken, deviceId } = sessionPollTokens(data);
             console.log("[QrAuth] Raw data from server:", {
               android_x25519_pub: data.android_x25519_pub,
               nonce: data.nonce,
               ciphertext: data.ciphertext,
+              hasAccessToken: Boolean(accessToken),
             });
+            if (!accessToken) {
+              setErrorMsg("Oturum jetonu alınamadı (AccessToken eksik)");
+              setStatus("error");
+              return;
+            }
             let transferKey: Uint8Array;
             let creds: ReturnType<typeof decryptCredentials>;
             try {
@@ -138,7 +149,8 @@ export default function QrAuthPage() {
             console.log("[QrAuth] Decrypted credentials:", creds);
             // setAuth persists the full credential set to the encrypted vault.
             setAuth({
-              jwt: creds.jwt,
+              accessToken,
+              deviceId,
               shadeId: creds.shade_id,
               userId: creds.user_id,
               x25519PrivKeyHex: creds.x25519_priv,
