@@ -14,11 +14,23 @@ import {
   Download,
   ChevronDown,
   X,
+  Users,
 } from "lucide-react";
 import { useAuthStore } from "../store/authStore";
-import { useMessageStore, type Chat, type Message } from "../store/messageStore";
+import {
+  useMessageStore,
+  type Chat,
+  type Message,
+  parseGroupIdFromChatId,
+} from "../store/messageStore";
 import { startSync } from "../services/syncService";
-import { connectChat, sendProtoMessage, sendReadReceiptsForChat } from "../services/chatService";
+import {
+  connectChat,
+  sendProtoMessage,
+  sendReadReceiptsForChat,
+  sendGroupTextMessage,
+} from "../services/chatService";
+import { resetSenderKeyStore, setGroupMembers } from "../services/senderKeyStore";
 import { getContactInfo, clearContactCache } from "../api/contactsApi";
 import {
   buildImageMessagePlaintext,
@@ -34,6 +46,7 @@ import {
 } from "../api/mediaApi";
 import { encryptImageAttachment, encryptMessage } from "../crypto/messageCrypto";
 import { clearVault } from "../store/vaultStore";
+import { createGroup, fetchGroups } from "../api/groupsApi";
 
 interface LocationState {
   sessionId?: string;
@@ -56,9 +69,14 @@ export default function ChatsPage() {
   const syncStatus = useMessageStore((s) => s.syncStatus);
   const syncError = useMessageStore((s) => s.syncError);
   const reset = useMessageStore((s) => s.reset);
+  const ensureGroupChat = useMessageStore((s) => s.ensureGroupChat);
 
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [imageUploadBusy, setImageUploadBusy] = useState(false);
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newGroupMembersRaw, setNewGroupMembersRaw] = useState("");
+  const [groupCreateBusy, setGroupCreateBusy] = useState(false);
   const addMessage = useMessageStore((s) => s.addMessage);
 
   // Send READ receipts when active chat changes or new messages arrive in it
@@ -68,6 +86,29 @@ export default function ChatsPage() {
   useEffect(() => {
     if (selectedChatId) sendReadReceiptsForChat(selectedChatId);
   }, [selectedChatId, selectedChatMsgCount]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const groups = await fetchGroups(accessToken);
+        if (cancelled) return;
+        for (const g of groups) {
+          setGroupMembers(
+            g.group_id,
+            g.members.map((m) => ({ user_id: m.user_id, shade_id: m.shade_id })),
+          );
+          ensureGroupChat(g.group_id, g.name);
+        }
+      } catch (e) {
+        console.warn("[ChatsPage] Gruplar yüklenemedi:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, ensureGroupChat]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -95,6 +136,7 @@ export default function ChatsPage() {
       // Fresh QR auth means a brand-new session — wipe any in-memory chats
       // left over from a different account so we don't merge histories.
       reset();
+      resetSenderKeyStore();
       stopSync = startSync({ sessionId, accessToken, transferKeyHex });
     }, 0);
     return () => {
@@ -105,6 +147,13 @@ export default function ChatsPage() {
   }, [sessionId, transferKeyHex, accessToken]);
 
   async function handleSend(chatId: string, text: string) {
+    const groupId = parseGroupIdFromChatId(chatId);
+    if (groupId) {
+      const ok = await sendGroupTextMessage(groupId, text);
+      if (!ok) console.warn("[ChatsPage] Grup mesajı gönderilemedi");
+      return;
+    }
+
     if (!x25519PrivKeyHex || !shadeId || !userId) return;
     let contact: { user_id: string; shade_id: string; encryption_public_key: string };
     try {
@@ -141,6 +190,10 @@ export default function ChatsPage() {
   }
 
   async function handleSendImage(chatId: string, file: File) {
+    if (parseGroupIdFromChatId(chatId)) {
+      window.alert("Grup sohbetlerinde görsel gönderimi henüz desteklenmiyor.");
+      return;
+    }
     if (!accessToken || !x25519PrivKeyHex || !shadeId || !userId || imageUploadBusy) return;
     let contact: { user_id: string; shade_id: string; encryption_public_key: string };
     try {
@@ -217,6 +270,7 @@ export default function ChatsPage() {
   async function handleLogout() {
     clearAuth();
     reset();
+    resetSenderKeyStore();
     clearContactCache();
     // Hard-wipe everything stored on the device — credentials, message history,
     // and the master AES key that encrypts them. Nothing should be recoverable.
@@ -226,6 +280,42 @@ export default function ChatsPage() {
       console.warn("[logout] clearVault failed:", e);
     }
     navigate("/", { replace: true });
+  }
+
+  async function handleCreateGroup() {
+    const name = newGroupName.trim();
+    if (!accessToken || !name || groupCreateBusy) return;
+    setGroupCreateBusy(true);
+    try {
+      const shadeIds = newGroupMembersRaw
+        .split(/[\s,;]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const member_ids: string[] = [];
+      for (const shade of shadeIds) {
+        try {
+          const c = await getContactInfo(shade, accessToken);
+          member_ids.push(c.user_id);
+        } catch {
+          console.warn("[ChatsPage] Shade bulunamadı, atlanıyor:", shade);
+        }
+      }
+      const g = await createGroup(accessToken, { name, member_ids });
+      setGroupMembers(
+        g.group_id,
+        g.members.map((m) => ({ user_id: m.user_id, shade_id: m.shade_id })),
+      );
+      ensureGroupChat(g.group_id, g.name);
+      setGroupModalOpen(false);
+      setNewGroupName("");
+      setNewGroupMembersRaw("");
+      setSelectedChatId(`group:${g.group_id}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      window.alert(msg);
+    } finally {
+      setGroupCreateBusy(false);
+    }
   }
 
   const chatList = Object.values(chats).sort(
@@ -249,6 +339,14 @@ export default function ChatsPage() {
               <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground/90">{shadeId}</p>
             )}
           </div>
+          <button
+            type="button"
+            onClick={() => setGroupModalOpen(true)}
+            title="Grup oluştur"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
+          >
+            <Users className="h-4 w-4" />
+          </button>
           <button
             onClick={() => void handleLogout()}
             title="Çıkış yap"
@@ -281,6 +379,61 @@ export default function ChatsPage() {
             ))
           )}
         </div>
+
+        {groupModalOpen ? (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+            <div
+              role="dialog"
+              aria-labelledby="group-modal-title"
+              className="w-full max-w-md rounded-2xl border border-border/60 bg-background p-5 shadow-xl"
+            >
+              <h2 id="group-modal-title" className="text-lg font-semibold text-foreground">
+                Yeni grup
+              </h2>
+              <p className="mt-1 text-[13px] text-muted-foreground">
+                Üye Shade ID&apos;leri opsiyoneldir (virgül veya boşlukla ayırın).
+              </p>
+              <label className="mt-4 block text-[13px] font-medium text-foreground">
+                Grup adı
+                <input
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  maxLength={128}
+                  className="mt-1.5 w-full rounded-xl border border-border/50 bg-muted/40 px-3 py-2 text-[15px] outline-none ring-violet-500/25 focus:ring-2"
+                  placeholder="Örn. Proje takımı"
+                />
+              </label>
+              <label className="mt-3 block text-[13px] font-medium text-foreground">
+                Üye Shade ID&apos;leri
+                <textarea
+                  value={newGroupMembersRaw}
+                  onChange={(e) => setNewGroupMembersRaw(e.target.value)}
+                  rows={3}
+                  className="mt-1.5 w-full resize-none rounded-xl border border-border/50 bg-muted/40 px-3 py-2 font-mono text-[12px] outline-none ring-violet-500/25 focus:ring-2"
+                  placeholder="shade_a shade_b ..."
+                />
+              </label>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={groupCreateBusy}
+                  onClick={() => setGroupModalOpen(false)}
+                  className="rounded-xl px-4 py-2 text-[13px] font-medium text-muted-foreground hover:bg-muted"
+                >
+                  İptal
+                </button>
+                <button
+                  type="button"
+                  disabled={groupCreateBusy || !newGroupName.trim()}
+                  onClick={() => void handleCreateGroup()}
+                  className="rounded-xl bg-violet-600 px-4 py-2 text-[13px] font-semibold text-white shadow-md shadow-violet-600/20 hover:bg-violet-700 disabled:opacity-40"
+                >
+                  {groupCreateBusy ? "Oluşturuluyor..." : "Oluştur"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </aside>
 
       {/* Main panel */}
@@ -291,6 +444,7 @@ export default function ChatsPage() {
             currentShadeId={shadeId}
             accessToken={accessToken ?? ""}
             imageUploadBusy={imageUploadBusy}
+            isGroupChat={Boolean(parseGroupIdFromChatId(selectedChat.chat_id))}
             onSend={(text) => void handleSend(selectedChat.chat_id, text)}
             onSendImage={(file) => void handleSendImage(selectedChat.chat_id, file)}
           />
@@ -348,7 +502,7 @@ function ChatRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <p className="truncate font-mono text-[13px] font-medium tracking-tight text-foreground">
-            {chat.chat_id}
+            {chat.kind === "group" ? chat.title ?? chat.chat_id : chat.chat_id}
           </p>
           {last && (
             <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground">
@@ -382,6 +536,7 @@ function MessagePanel({
   currentShadeId,
   accessToken,
   imageUploadBusy,
+  isGroupChat,
   onSend,
   onSendImage,
 }: {
@@ -389,6 +544,7 @@ function MessagePanel({
   currentShadeId: string;
   accessToken: string;
   imageUploadBusy: boolean;
+  isGroupChat: boolean;
   onSend: (text: string) => void;
   onSendImage: (file: File) => void;
 }) {
@@ -406,7 +562,7 @@ function MessagePanel({
       <div className="flex shrink-0 items-center gap-3 border-b border-border/60 bg-background/50 px-5 py-4 backdrop-blur-md">
         <ChatAvatar id={chat.chat_id} size="sm" />
         <p className="truncate font-mono text-[15px] font-semibold tracking-tight text-foreground">
-          {chat.chat_id}
+          {chat.kind === "group" ? chat.title ?? chat.chat_id : chat.chat_id}
         </p>
       </div>
 
@@ -415,23 +571,25 @@ function MessagePanel({
           dragOverMsgs ? "bg-violet-500/[0.07] ring-2 ring-violet-500/25 ring-inset" : ""
         }`}
         onDragEnter={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return;
+          if (isGroupChat || !e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           dragDepthRef.current += 1;
           setDragOverMsgs(true);
         }}
         onDragLeave={(e) => {
+          if (isGroupChat) return;
           e.preventDefault();
           dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
           if (dragDepthRef.current === 0) setDragOverMsgs(false);
         }}
         onDragOver={(e) => {
-          if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+          if (!isGroupChat && e.dataTransfer.types.includes("Files")) e.preventDefault();
         }}
         onDrop={(e) => {
           e.preventDefault();
           dragDepthRef.current = 0;
           setDragOverMsgs(false);
+          if (isGroupChat) return;
           const file = e.dataTransfer.files?.[0];
           if (!file?.type.startsWith("image/")) return;
           onSendImage(file);
@@ -458,6 +616,7 @@ function MessagePanel({
         onSend={onSend}
         onSendImage={onSendImage}
         imageUploadBusy={imageUploadBusy}
+        hideImageUpload={isGroupChat}
       />
     </>
   );
@@ -467,10 +626,12 @@ function MessageInput({
   onSend,
   onSendImage,
   imageUploadBusy,
+  hideImageUpload,
 }: {
   onSend: (text: string) => void;
   onSendImage: (file: File) => void;
   imageUploadBusy: boolean;
+  hideImageUpload?: boolean;
 }) {
   const [text, setText] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -490,6 +651,7 @@ function MessageInput({
   }
 
   function handlePaste(e: React.ClipboardEvent<HTMLInputElement>) {
+    if (hideImageUpload) return;
     const items = e.clipboardData.items;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -513,19 +675,21 @@ function MessageInput({
         className="hidden"
         onChange={handleFileChange}
       />
-      <button
-        type="button"
-        disabled={imageUploadBusy}
-        title="Görsel gönder"
-        onClick={() => fileRef.current?.click()}
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border/50 bg-muted/80 text-muted-foreground shadow-sm transition-all hover:border-violet-500/25 hover:bg-muted hover:text-foreground disabled:opacity-40"
-      >
-        {imageUploadBusy ? (
-          <Loader2 className="h-[18px] w-[18px] animate-spin" />
-        ) : (
-          <ImageIcon className="h-[18px] w-[18px]" />
-        )}
-      </button>
+      {!hideImageUpload ? (
+        <button
+          type="button"
+          disabled={imageUploadBusy}
+          title="Görsel gönder"
+          onClick={() => fileRef.current?.click()}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border/50 bg-muted/80 text-muted-foreground shadow-sm transition-all hover:border-violet-500/25 hover:bg-muted hover:text-foreground disabled:opacity-40"
+        >
+          {imageUploadBusy ? (
+            <Loader2 className="h-[18px] w-[18px] animate-spin" />
+          ) : (
+            <ImageIcon className="h-[18px] w-[18px]" />
+          )}
+        </button>
+      ) : null}
       <input
         value={text}
         onChange={(e) => setText(e.target.value)}

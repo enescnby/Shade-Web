@@ -29,10 +29,25 @@ export interface Message {
   status: MsgStatus;
 }
 
+export const GROUP_CHAT_PREFIX = "group:";
+
+export function toGroupChatId(groupId: string): string {
+  return `${GROUP_CHAT_PREFIX}${groupId}`;
+}
+
+export function parseGroupIdFromChatId(chatId: string): string | null {
+  return chatId.startsWith(GROUP_CHAT_PREFIX)
+    ? chatId.slice(GROUP_CHAT_PREFIX.length)
+    : null;
+}
+
 export interface Chat {
   chat_id: string;
   messages: Message[];
   lastMessage?: Message;
+  kind?: "dm" | "group";
+  /** Grup adı — gösterim için */
+  title?: string;
 }
 
 interface PersistedSnapshot {
@@ -51,6 +66,8 @@ interface MessageState {
   addMessage: (message: Message) => void;
   hasMessage: (messageId: string) => boolean;
   updateMessageStatus: (messageId: string, status: MsgStatus) => void;
+  ensureGroupChat: (groupId: string, title: string) => void;
+  removeGroupChat: (groupId: string) => void;
   setSyncStatus: (status: SyncStatus, error?: string) => void;
   reset: () => void;
   hydrate: () => Promise<void>;
@@ -147,6 +164,33 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       if (chats[chatId].messages.some((m) => m.message_id === messageId)) return true;
     }
     return false;
+  },
+
+  ensureGroupChat: (groupId, title) => {
+    const chat_id = toGroupChatId(groupId);
+    set((state) => {
+      const chats = { ...state.chats };
+      const existing = chats[chat_id];
+      chats[chat_id] = {
+        chat_id,
+        messages: existing?.messages ?? [],
+        lastMessage: existing?.lastMessage,
+        kind: "group",
+        title,
+      };
+      schedulePersist({ chats, syncStatus: state.syncStatus });
+      return { chats };
+    });
+  },
+
+  removeGroupChat: (groupId) => {
+    const chat_id = toGroupChatId(groupId);
+    set((state) => {
+      const chats = { ...state.chats };
+      delete chats[chat_id];
+      schedulePersist({ chats, syncStatus: state.syncStatus });
+      return { chats };
+    });
   },
 
   updateMessageStatus: (messageId, status) => {

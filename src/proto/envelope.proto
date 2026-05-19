@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+option go_package = "./pb";
+
+package pb;
+
+import "message.proto";
+import "group.proto";
+
+message MessageAck {
+  string message_id = 1;
+}
+
+message WebSocketMessage {
+  oneof content {
+    EncryptedPayload     payload = 1;
+    DeliveryReceipt      receipt = 2;
+    MessageAck           ack = 3;
+    GroupKeyDistribution gkd = 4;
+    GroupMembershipEvent gme = 5;
+  }
+}

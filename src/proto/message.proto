@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+option go_package = "./pb";
+
+package pb;
+
+enum MessageType {
+  TEXT = 0;
+  IMAGE = 1;
+}
+
+enum ReceiptStatus {
+  DELIVERED = 0;
+  READ = 1;
+}
+
+message EncryptedPayload {
+  string message_id = 1;
+  string sender_id = 2;
+  string sender_shade_id = 3;
+
+  //1-1 mesajlarda dolu, grup mesajlarında boş.
+  string receiver_id = 4;
+
+  bytes ciphertext = 5;
+  bytes nonce = 6;
+  bytes auth_tag = 7;
+
+  int64 timestamp = 8;
+  MessageType type = 9;
+
+  string group_id = 10;
+  string sender_device_id = 11;
+  uint32 sender_key_id = 12;
+  uint64 chain_index = 13;
+
+  bytes signature = 14;
+}
+
+message DeliveryReceipt {
+  string message_id = 1;
+  string sender_id = 2;
+  string sender_shade_id = 3;
+  string receiver_id = 4;
+  ReceiptStatus status = 5;
+  int64 timestamp = 6;
+
+  string group_id = 7;
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "./store/authStore";
 import { useMessageStore } from "./store/messageStore";
+import { hydrateSenderKeyStore } from "./services/senderKeyStore";
 import QrAuthPage from "./pages/QrAuthPage";
 import ChatsPage from "./pages/ChatsPage";
 
@@ -18,9 +19,11 @@ export default function App() {
   const [bootstrapped, setBootstrapped] = useState(false);
 
   useEffect(() => {
-    void Promise.all([hydrateAuth(), hydrateMessages()]).finally(() =>
-      setBootstrapped(true),
-    );
+    void Promise.all([
+      hydrateAuth(),
+      hydrateMessages(),
+      hydrateSenderKeyStore(),
+    ]).finally(() => setBootstrapped(true));
   }, [hydrateAuth, hydrateMessages]);
 
   if (!bootstrapped || !authHydrated || !messagesHydrated) {

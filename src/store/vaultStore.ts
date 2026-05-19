@@ -95,4 +95,5 @@ export async function clearVault(): Promise<void> {
 export const VAULT_SLOTS = {
   AUTH: "auth",
   MESSAGES: "messages",
+  SENDER_KEYS: "sender_keys",
 } as const;

@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+option go_package = "./pb";
+
+package pb;
+
+message GroupKeyDistribution {
+  string group_id            = 1;
+  string sender_user_id      = 2;
+  string sender_device_id    = 3;
+  string recipient_user_id   = 4;
+  string recipient_device_id = 5;
+
+  bytes encrypted_skdm = 6;
+  bytes nonce          = 7;
+}
+
+message GroupMembershipEvent {
+  enum Kind {
+    JOINED  = 0;
+    LEFT    = 1;
+    REMOVED = 2;
+  }
+
+  string group_id = 1;
+  Kind kind       = 2;
+  string actor_id = 3;
+  string subject_id = 4;
+  int64 timestamp = 5;
+}

@@ -1,4 +1,5 @@
 import { API_URL } from "../env";
+import { fetchUserKeys } from "./keysApi";
 
 export interface ContactInfo {
   user_id: string;
@@ -38,6 +39,32 @@ export async function getContactInfo(
  */
 export function getContactByUserId(userId: string): ContactInfo | null {
   return byUserId.get(userId) ?? null;
+}
+
+/** Android `getOrFetchContactByUserId` — önce `GET /keys/:user_id`, sonra önbellek. */
+export async function fetchContactByUserId(
+  userId: string,
+  accessToken: string,
+  options?: { bypassCache?: boolean },
+): Promise<ContactInfo | null> {
+  if (!options?.bypassCache) {
+    const cached = getContactByUserId(userId);
+    if (cached?.encryption_public_key) return cached;
+  }
+
+  try {
+    const keys = await fetchUserKeys(userId, accessToken);
+    const info: ContactInfo = {
+      user_id: userId,
+      shade_id: keys.core_guard_id?.trim() || userId,
+      encryption_public_key: keys.public_key,
+    };
+    cacheContact(info);
+    return info;
+  } catch {
+    const cached = getContactByUserId(userId);
+    return cached?.encryption_public_key ? cached : null;
+  }
 }
 
 /** Pre-populate both caches — used by the sync flow once it knows chat partners. */

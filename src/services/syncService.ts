@@ -1,8 +1,9 @@
 import { WS_URL } from "../env";
 import { hexToBytes } from "../crypto/utils";
-import { useMessageStore, type RawMessage } from "../store/messageStore";
+import { useMessageStore, type RawMessage, parseGroupIdFromChatId } from "../store/messageStore";
 import { useAuthStore } from "../store/authStore";
 import { prefetchContacts } from "../api/contactsApi";
+import { applySyncedGroupsFromWire } from "./syncWireContract";
 
 interface SyncOptions {
   sessionId: string;
@@ -17,7 +18,10 @@ export function startSync({
 }: SyncOptions): () => void {
   const { addBatch, setSyncStatus } = useMessageStore.getState();
   const transferKey = hexToBytes(transferKeyHex);
-  const seenChatPartners = new Set<string>();
+  /** DM karşı Shade ID’leri */
+  const seenDmPeers = new Set<string>();
+  /** Grup üyelerinin Shade ID’leri (contacts prefetch) */
+  const seenGroupMemberShades = new Set<string>();
 
   setSyncStatus("connecting");
 
@@ -35,19 +39,33 @@ export function startSync({
       const msg = JSON.parse(event.data) as {
         type: string;
         messages?: RawMessage[];
+        groups?: unknown;
         code?: string;
         message?: string;
       };
-      if (msg.type === "batch" && Array.isArray(msg.messages)) {
-        addBatch(msg.messages, transferKey);
-        const ownShadeId = useAuthStore.getState().shadeId;
-        for (const m of msg.messages) {
-          if (m.chat_id && m.chat_id !== ownShadeId) seenChatPartners.add(m.chat_id);
+
+      if (msg.type === "groups_snapshot" && msg.groups !== undefined) {
+        applySyncedGroupsFromWire(msg.groups).forEach((id) => seenGroupMemberShades.add(id));
+      }
+
+      if (msg.type === "batch") {
+        if (msg.groups !== undefined) {
+          applySyncedGroupsFromWire(msg.groups).forEach((id) => seenGroupMemberShades.add(id));
+        }
+        if (Array.isArray(msg.messages)) {
+          addBatch(msg.messages, transferKey);
+          const ownShadeId = useAuthStore.getState().shadeId;
+          for (const m of msg.messages) {
+            if (!m.chat_id || m.chat_id === ownShadeId) continue;
+            if (parseGroupIdFromChatId(m.chat_id)) continue;
+            seenDmPeers.add(m.chat_id);
+          }
         }
       } else if (msg.type === "sync_complete") {
         setSyncStatus("done");
-        if (seenChatPartners.size > 0) {
-          void prefetchContacts(Array.from(seenChatPartners), accessToken);
+        const shades = [...seenDmPeers, ...seenGroupMemberShades];
+        if (shades.length > 0) {
+          void prefetchContacts(shades, accessToken);
         }
         ws.close(1000);
       } else if (msg.type === "error") {
